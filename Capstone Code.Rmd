@@ -1,0 +1,546 @@
+---
+title: "Untitled"
+author: "Dylan Wilkerson"
+date: "6/8/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+#install packages
+library(tidyverse)
+library(nflfastR)
+library(teamcolors)
+library(ggimage)
+library(caret)
+library(psych)
+library(partykit)
+library(glmnet)
+library(randomForest)
+
+#Change WFT in teamcolors and change name of column
+teamcolors <- filter(teamcolors, league == "nfl")
+teamcolors$Team <- teamcolors$name
+teamcolors$Team[32] <- "Washington Football Team" 
+teamcolors$name[32] <- "Washington Football Team"
+teamcolors$Team[25] <- "Las Vegas Raiders"
+teamcolors$name[25] <- "Las Vegas Raiders"
+#import season data, rating, and pbp data
+defense <- read.csv("C:/Users/denise.cordonnier/Documents/Schoolwork/NFL Defense for Capstone.csv")
+offense <- read.csv("C:/Users/denise.cordonnier/Documents/Schoolwork/NFL Offense for Capstone.csv")
+ratings <- read.csv("C:/Users/denise.cordonnier/Documents/Schoolwork/NFL Ratings ONLY.csv")
+gbg <- read.csv("C:/Users/denise.cordonnier/Documents/Schoolwork/Game by Game Data.csv")
+gbg <- gbg[order(gbg$Week),]
+seasons <- 2020
+pbp <- nflfastR::load_pbp(seasons)
+#filter for only regular season
+pbp <- pbp %>%
+  filter(season_type == "REG")
+#Add column with abbreviation and one with logos
+defense$Abbr. <- c("LAR", "BAL", "PIT", "WAS", "NO", "MIA", "NE", "TAM", "NYG", "IND",
+                   "KC", "ARI", "GB", "CHI", "SEA", "BUF", "SF", "CAR", "ATL", "PHI", "CLE",
+                   "CIN", "LAC", "TEN", "DEN", "NYJ", "HOU", "DAL", "MIN", "LV", "JAX", "DET")
+offense$Abbr. <- c("GB", "BUF", "TAM", "TEN", "NO", "KC", "BAL", "SEA", "IND", "LV", "MIN",
+                   "PIT", "ARI", "CLE", "MIA", "ATL", "DAL", "HOU", "LAC", "DET", "SF", "LAR",
+                   "CHI", "CAR", "WAS", "PHI", "NE", "DEN", "CIN", "JAX", "NYG", "NYJ")
+
+#Join teamcolors to offense and defense
+offense <- left_join(offense, teamcolors, by = "Team")
+defense <- left_join(defense, teamcolors, by = "Team")
+offense <- left_join(offense, ratings, by = "Abbr." )
+defense <- left_join(defense, ratings, by = "Abbr." )
+offense
+offense <- offense[, c(1, 2, 39, 3:38)]
+defense <- defense[, c(1, 2, 39, 3:38)]
+offense <- offense %>%
+  select(Team, Rating, PF, TotYds, Ply, Y.Play, TO, Fuml, X1stD, PassCmp, PassAtt, PassTD, Int, NetYds.Att, Pass1stD,
+         RushAtt, RushYds, RushTD, RushYds.Att, Rush1stD, Pen, PenYds, X1stPy, Sc., TO., EXP, Abbr., logo)
+defense <- defense %>%
+  select(Team, Rating, PF, TotYds, TotPly, Y.Play, TO, FumL, X1stD, PassCmp, PassAtt, PassYds, PassTD, Int, NetYds.Att,
+         RushAtt, RushYds, RushTD, RushYds.Att, Rush1stD, Pen, PenYds, X1stPy, OScore., TO., EXP, Abbr., logo)
+
+#Create matchups for week 18
+NFC <- c("GB", "SF","SEA", "TAM", "NYG", "CHI", "MIN", "PHI", "NO", "ATL", "ARI", "LAR", "WAS", "DET", "CAR", "DAL")
+AFC <- c("NE", "KC", "TEN", "PIT", "BUF", "CLE", "IND", "LV", "DEN", "NYJ", "JAX", "BAL", "MIA", "LAC", "CIN", "HOU")
+matchup <- data.frame(NFC, AFC)
+#Sample from created df
+set.seed(18)
+NFC <- sample(NFC)
+AFC <- sample(AFC)
+matchup$Matchup <- c("Matchup 1", "Matchup 2", "Matchup 3", "Matchup 4", "Matchup 5", "Matchup 6", "Matchup 7",
+                     "Matchup 8", "Matchup 9", "Matchup 10", "Matchup 11", "Matchup 12", "Matchup 13", "Matchup 14",
+                     "Matchup 15", "Matchup 16") 
+
+#Sample to get 8 AFC teams to be home
+home <- sample(matchup$AFC, 8)
+colnames(matchup)[1] <- "Home"
+colnames(matchup)[2] <- "Away"
+matchup$Home <- c("NYJ", "BAL", "LAC", "LV", "PIT", "BUF", "HOU", "TEN", "GB", "SF", "CHI", "MIN", "NO", "ARI", "WAS", "CAR")
+matchup$Away <- c("ATL", "LAR", "DET", "PHI", "TAM", "NYG", "DAL", "SEA", "NE", "KC", "CLE", "IND", "DEN", "JAX", "MIA", "CIN")
+matchup$Line <- c("+12.5", "-3", "-5", "-2.5", "+5", "-12", "EVEN", "+3.5", "-8.5", "+6", "-3", "+5", "-15.5", "-14", "+4", "-6.5")
+matchup <- matchup[, c(3, 1, 4, 2)]
+
+```
+
+Visualize basic statisticS for each team. Preferably 2 for offense and 2 for defense.
+DESCRPIPTIVE
+
+```{r DESCRIPTIVE}
+#Load in sports betting data as of 6/22
+sportsbetting <- read.csv("C:/Users/denise.cordonnier/Documents/Schoolwork/Sports Betting by the Numbers.csv")
+
+#Remove "total" observation and get the mean revenue
+sportsbetting2 <- sportsbetting[-c(19),]
+avgrev <- mean(sportsbetting2$Revenue)
+
+
+#Plot sports betting handle by state
+bettingvisual <- sportsbetting2 %>%
+  ggplot(aes(State, Revenue)) +
+  geom_bar(stat="identity", width=.5,fill="red3")+
+  labs(title = "Sports Betting Handle by State",
+       subtitle = "As of 6/22/2021, in millions",
+       caption = "Source: legalsportsreport.com") +
+  theme(axis.text.x = element_text(angle=80, vjust=0.6)) +
+  theme(plot.background = element_rect(fill = "gray69")) +
+  geom_hline(yintercept = avgrev, linetype = "dotted", color = "grey0") +
+  theme(panel.background = element_rect(fill = "gray100"),
+        panel.grid.major = element_line(color = "gray0", size = .1))
+  
+bettingvisual
+
+#Find league avg. for TD Passes and Rating
+avgPenYds <- mean(offense$PenYds)
+avgrating <- mean(offense$Rating)
+
+#For Graph
+model <- lm(Rating ~ PenYds, offense)
+
+#Rating by TD passes
+passtd <- ggplot(offense, aes(PenYds, Rating)) +
+  geom_point() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  ggtitle("Do Penalty Yards Affect Team Rating?", subtitle = "2020-2021 Season") +
+  labs(x = "Penalty Yards", y = "Team Rating",
+       caption = "Source: profootballreference.com") +
+  geom_hline(yintercept = avgrating, linetype = "dashed", color = "blue") +
+  geom_vline(xintercept = avgPenYds, linetype = "dashed", color = "red") +
+  geom_image(aes(image=logo), size = .05, by = 'height') +
+  theme_dark() +
+  geom_abline(intercept = .7370180, slope = -.0009466) +
+  theme(plot.background = element_rect(fill = "snow2"))
+passtd
+
+
+#Find league avg. for TO and Rating
+avgTO <- mean(offense$TO.)
+avgrating <- mean(offense$Rating)
+
+#For Graph
+model2 <- lm(Rating ~ TO., offense)
+
+#Rating by TO's Allowed
+TOplot <- ggplot(offense, aes(TO., Rating)) +
+  geom_point() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  ggtitle("Do Turnovers Allowed Affect Team Rating?", subtitle = "2020-2021 Season") +
+  labs(x = "Turnovers", y = "Team Rating",
+       caption = "Source: profootballreference.com") +
+  geom_hline(yintercept = avgrating, linetype = "dashed", color = "blue") +
+  geom_vline(xintercept = avgTO, linetype = "dashed", color = "red") +
+  geom_image(aes(image=logo), size = .05, by = 'height') +
+  theme_dark() +
+  geom_abline(intercept = 13.273, slope = -1.167) +
+  theme(plot.background = element_rect(fill = "snow2"))
+
+TOplot
+
+#Rating by Defensive yards/play
+avgDYP <- mean(defense$Y.Play)
+avgrating <- mean(offense$Rating)
+
+#For Graph
+model3 <- lm(Rating ~ Y.Play, defense)
+
+#Rating by DYP
+DYP <- ggplot(defense, aes(Y.Play, Rating)) +
+  geom_point() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  ggtitle("Yards Allowed per Play vs. Rating", subtitle = "2020-2021 Season") +
+  labs(x = "Yards Allowed per Play", y = "Team Rating",
+       caption = "Source: profootballreference.com") +
+  geom_hline(yintercept = avgrating, linetype = "dashed", color = "blue") +
+  geom_vline(xintercept = avgDYP, linetype = "dashed", color = "red") +
+  geom_image(aes(image=logo), size = .05, by = 'height') +
+  theme_dark() +
+  geom_abline(intercept = 43.011, slope = -7.719) +
+  theme(plot.background = element_rect(fill = "snow2"))
+
+DYP
+```
+
+PREDICTIVE
+
+```{r OLS, echo=FALSE}
+#Create OLS MODELS
+model_1 <- lm(MOV ~ PassAtt + RushAtt + TotYds + Pen, gbg)
+model_2 <- lm(MOV ~ PassAtt + RushAtt + TotYds + X4DConv + Int, gbg)
+model_3 <- lm(MOV ~ PassAtt + RushAtt + TotYds + X3DConv, gbg)
+model_4 <- lm(MOV ~ PassAtt + TotYds + X3DConv + QBR + X4DConv, gbg)
+#Compare Models
+anova(model_1, model_2)
+anova(model_2, model_3)
+anova(model_3, model_4) #model 4 is the best model
+summary(model_4)
+#Partition Data
+rows=nrow(gbg)
+index=0.80*rows
+train <- gbg[1:index, ]
+test <- gbg[-(1:index), ]
+#Train model using train data
+set.seed(18)
+cntrl <- trainControl(method="repeatedcv",number = 10, repeats = 5)
+model_ols <- train(MOV ~ PassAtt + TotYds + X3DConv + X4DConv + QBR, 
+                   data=train,
+                   method="lm",
+                   trControl=cntrl)
+plot(varImp(model_ols,scale=T), main="Variable importance from OLS Model")
+varImp(model_ols)
+model_olspred_tr <- predict(model_ols,newdata=train)
+model_olspred_ts <- predict(model_ols,newdata=test)
+
+model_olsperformance_tr <- data.frame(RMSE=RMSE(model_olspred_tr,train$MOV),
+                                      Rsquare=R2(model_olspred_tr,train$MOV))
+print(model_olsperformance_tr)
+
+## OLS Model performance Test data 
+model_olsperformance_ts <- data.frame(RMSE=RMSE(model_olspred_ts,test$MOV),
+                                      Rsquare=R2(model_olspred_ts,test$MOV))
+print(model_olsperformance_ts)
+
+
+plot(model_olspred_ts,type="l",col="red",ylab ="MOV",main = "OLS Model Performance") +
+lines(test$MOV,col="blue") +
+legend(10,10,legend=c("Predicted","Actual"),col=c("red","blue"),lty=1:2,cex=.8) #ERROR
+```
+
+
+
+```{r LASO}
+# LASO REGRESSION
+set.seed(18)
+lambda_grid <- 10^seq(2.5,-2.5,length=100)
+model_laso <- train(MOV ~ PassAtt + TotYds + X3DConv + X4DConv + QBR,
+                    data=train,
+                    method="glmnet",
+                    tuneGrid=expand.grid(alpha=1,lambda=lambda_grid),
+                    trControl=cntrl)
+#Get lambda
+model_laso$bestTune$lambda
+print(model_laso)
+log(model_laso$bestTune$lambda)
+
+#get coef
+coef(model_laso$finalModel,model_laso$bestTune$lambda)
+
+#Plot lambdas to R squared
+lambdaRsq <- plot(log(model_laso$result$lambda),model_laso$result$Rsquared,xlab="log(lambda)",ylab="Rsquared",xlim=c(6,-6),main = " LASSO log Reguralization Parameter Vs Rsquare")
+
+#plot lamdas to RMSE
+lambdaRMSE <- plot(log(model_laso$result$lambda),model_laso$result$RMSE,xlab="log(lambda)",ylab="RMSE",xlim=c(6,-6),main = " LASSO log Reguralization Parameter Vs RMSE")
+#get log lambda, plot VarImp
+log(model_laso$bestTune$lambda)
+plot(model_laso$finalModel,xvar="lambda", label=TRUE,main="LASSO REGRESSION")
+varImp(model_laso)
+plot(varImp(model_laso,Scale=T),main="LASSO REGRESSION")
+
+#PREDICT ON TEST DATA
+model_lasopred_ts <- predict(model_laso,newdata=test)
+model_lasoperformance_ts <- data.frame(RMSE=RMSE(model_lasopred_ts,test$MOV),
+                                       Rsquare=R2(model_lasopred_ts,test$MOV))
+print(model_lasoperformance_ts)
+
+plot(model_lasopred_ts,type="l",col="red",ylab ="MOV",main = "Lasso Model Performance") +
+lines(test$MOV,col="blue") +
+legend(10,10,legend=c("Predicted","Actual"),col=c("red","blue"),lty=1:2,cex=0.8)
+```
+
+```{r RIDGE}
+set.seed(18)
+
+model_rdg <- train(MOV ~ PassAtt + TotYds + X3DConv + X4DConv + QBR,
+                   data=train,
+                   method="glmnet",
+                   tuneGrid=expand.grid(alpha=0,lambda=lambda_grid),
+                   trControl=cntrl)
+
+model_rdg$bestTune  # Gives best tuning parameter
+
+##Visual inspection of RIDGE Regularization Parameter and RMSE
+plot(model_rdg)
+
+##OR Visual inspection of RIDGE log(lambda) and RMSE
+plot(log(model_rdg$result$lambda),model_rdg$result$RMSE,xlab="log(lambda)",ylab="RMSE",xlim=c(6,-6),main=" Ridge log Reguralization Parameter Vs RMSE")
+log(model_rdg$bestTune$lambda)
+
+
+## OR Visual inspection of RIDGE  log(lambda) and Rsquared
+plot(log(model_rdg$result$lambda),model_rdg$result$Rsquared,xlab="log(lambda)",ylab="Rsquared",xlim=c(6,-6))
+
+
+#### Variable Importance
+varImp(model_rdg)
+plot(varImp(model_rdg, Scale = T),main=" Ridge Regression")
+
+plot(model_rdg$finalModel,xvar="lambda", label=TRUE)
+
+## Ridge Regression model coefficient 
+coef(model_rdg$finalModel,model_rdg$bestTune$lambda)
+plot(model_rdg$finalModel,xvar="lambda", label=TRUE,main="Ridge Regression")
+
+## predict outcome from Ridge Regression Model using test_data
+model_rdgpred_ts <- predict(model_rdg,newdata=test)
+model_rdgperformance_ts <- data.frame(RMSE=RMSE(model_rdgpred_ts,test$MOV),
+                                      Rsquare=R2(model_rdgpred_ts,test$MOV))
+print(model_rdgperformance_ts)
+
+plot(model_rdgpred_ts,type="l",col="red",ylab ="MOV",main = "Ridge Model Performance") +
+lines(test$MOV,col="blue") +
+legend(7,-10,legend=c("Predicted","Actual"),col=c("red","blue"),lty=1:2,cex=0.8)
+
+```
+```{r ELASTIC NET}
+set.seed(18)
+
+#Model Creation
+model_net <- train(MOV ~ PassAtt + TotYds + X3DConv + X4DConv + QBR,
+                   data=train,
+                   method="glmnet",
+                   tuneGrid=expand.grid(alpha=seq(0,1,length=10),lambda=lambda_grid), #ERROR
+                   trControl=cntrl)
+
+model_net$bestTune # Gives best tuning parameter
+
+# Visual inspection of Elastic Net Regularization Parameter and RMSE
+plot(model_net)
+model_net
+
+# Variable Importance
+plot(model_net$finalModel,xvar="lambda", main="Elastic Net Regression",label=TRUE)
+varImp(model_net)
+plot(varImp(model_net),main=" Net Regression")
+
+## Elastic Regression model coefficient 
+coef(model_net$finalModel,model_net$bestTune$lambda)
+
+## predict outcome from Elastic Net Regression Model using test_data
+model_netpred_ts <- predict(model_net,newdata=test)
+model_netperformance_ts <- data.frame(RMSE=RMSE(model_netpred_ts,test$MOV),
+                                      Rsquare=R2(model_netpred_ts,test$MOV))
+print(model_netperformance_ts)
+
+#Comparison of RIDGE, LASSO and Elastic Net Regression Models performance for the test data
+comp_ts <- matrix(c(model_lasoperformance_ts,model_rdgperformance_ts,model_netperformance_ts ),ncol=2,byrow=TRUE)
+colnames(comp_ts) <- c("RMSE","Rsquare")
+rownames(comp_ts) <- c("LASSO","RIDGE","Net")
+print(comp_ts, digits=3)# round to 4 decimal places
+
+plot(model_netpred_ts,type="l",col="red",ylab ="MOV",main = "Elastic Net Model Performance") +
+lines(test$MOV,col="blue") +
+legend(10,10,legend=c("Predicted","Actual"),col=c("red","blue"),lty=1:2,cex=0.8)
+```
+```{r OLS DEFENSE}
+#Create OLS MODELS
+model_1D <- lm(MOV ~ DPly + DY.P + PA, gbg)
+summary(model_1D)
+
+#Partition Data
+rows=nrow(gbg)
+index=0.80*rows
+train <- gbg[1:index, ]
+test <- gbg[-(1:index), ]
+#Train model using train data
+set.seed(18)
+cntrl <- trainControl(method="repeatedcv",number = 10, repeats = 5)
+model_olsD <- train(MOV ~ DPly + DY.P + PA, 
+                   data=train,
+                   method="lm",
+                   trControl=cntrl)
+
+plot(varImp(model_olsD,scale=T), main="Variable importance from OLS Model")
+varImp(model_olsD)
+model_olspred_trD <- predict(model_olsD,newdata=train)
+model_olspred_tsD <- predict(model_olsD,newdata=test)
+
+model_olsperformance_trD <- data.frame(RMSE=RMSE(model_olspred_trD,train$MOV),
+                                      Rsquare=R2(model_olspred_trD,train$MOV))
+print(model_olsperformance_trD)
+
+## OLS Model performance Test data 
+model_olsperformance_tsD <- data.frame(RMSE=RMSE(model_olspred_tsD,test$MOV),
+                                      Rsquare=R2(model_olspred_tsD,test$MOV))
+print(model_olsperformance_tsD)
+
+
+plot(model_olspred_tsD,type="l",col="red",ylab ="MOV",main = "OLS Model Performance") +
+lines(test$MOV,col="blue") +
+legend(10,10,legend=c("Predicted","Actual"),col=c("red","blue"),lty=1:2,cex=0.8) #ERROR
+```
+
+
+
+```{r LASO DEFENSE}
+# LASO REGRESSION
+set.seed(18)
+lambda_grid <- 10^seq(2.5,-2.5,length=100)
+model_lasoD <- train(MOV ~ DPly + DY.P + PA,
+                    data=train,
+                    method="glmnet",
+                    tuneGrid=expand.grid(alpha=1,lambda=lambda_grid),
+                    trControl=cntrl) #Error
+#Get lambda
+model_lasoD$bestTune$lambda
+print(model_lasoD)
+log(model_lasoD$bestTune$lambda)
+
+#get coef
+coef(model_lasoD$finalModel,model_lasoD$bestTune$lambda)
+
+#Plot lambdas to R squared
+lambdaRsqD <- plot(log(model_lasoD$result$lambda),model_lasoD$result$Rsquared,xlab="log(lambda)",ylab="Rsquared",xlim=c(6,-6),main = " LASSO log Reguralization Parameter Vs Rsquare")
+
+#plot lamdas to RMSE
+lambdaRMSED <- plot(log(model_lasoD$result$lambda),model_lasoD$result$RMSE,xlab="log(lambda)",ylab="RMSE",xlim=c(6,-6),main = " LASSO log Reguralization Parameter Vs RMSE")
+#get log lambda, plot VarImp
+log(model_lasoD$bestTune$lambda)
+plot(model_lasoD$finalModel,xvar="lambda", label=TRUE,main="LASSO REGRESSION")
+varImp(model_lasoD)
+plot(varImp(model_lasoD,Scale=T),main="LASSO REGRESSION")
+
+#PREDICT ON TEST DATA
+model_lasopred_tsD <- predict(model_lasoD,newdata=test)
+model_lasoperformance_tsD <- data.frame(RMSE=RMSE(model_lasopred_tsD,test$MOV),
+                                       Rsquare=R2(model_lasopred_tsD,test$MOV))
+print(model_lasoperformance_tsD)
+```
+
+```{r RIDGE DEFENSE}
+set.seed(18)
+
+model_rdgD <- train(MOV ~ DPly + DY.P + PA,
+                   data=train,
+                   method="glmnet",
+                   tuneGrid=expand.grid(alpha=0,lambda=lambda_grid),
+                   trControl=cntrl)
+
+model_rdgD$bestTune  # Gives best tuning parameter
+
+##Visual inspection of RIDGE Regularization Parameter and RMSE
+plot(model_rdgD)
+
+##OR Visual inspection of RIDGE log(lambda) and RMSE
+plot(log(model_rdgD$result$lambda),model_rdgD$result$RMSE,xlab="log(lambda)",ylab="RMSE",xlim=c(6,-6),main=" Ridge log Reguralization Parameter Vs RMSE")
+log(model_rdgD$bestTune$lambda)
+
+
+## OR Visual inspection of RIDGE  log(lambda) and Rsquared
+plot(log(model_rdgD$result$lambda),model_rdgD$result$Rsquared,xlab="log(lambda)",ylab="Rsquared",xlim=c(6,-6))
+
+
+#### Variable Importance
+varImp(model_rdgD)
+plot(varImp(model_rdgD, Scale = T),main=" Ridge Regression")
+
+plot(model_rdgD$finalModel,xvar="lambda", label=TRUE)
+
+## Ridge Regression model coefficient 
+coef(model_rdgD$finalModel,model_rdgD$bestTune$lambda)
+plot(model_rdgD$finalModel,xvar="lambda", label=TRUE,main="Ridge Regression")
+
+## predict outcome from Ridge Regression Model using test_data
+model_rdgpred_tsD <- predict(model_rdgD,newdata=test)
+model_rdgperformance_tsD <- data.frame(RMSE=RMSE(model_rdgpred_tsD,test$MOV),
+                                      Rsquare=R2(model_rdgpred_tsD,test$MOV))
+print(model_rdgperformance_tsD)
+
+plot(model_rdgpred_tsD,type="l",col="red",ylab ="MOV",main = "Ridge Model Performance") +
+lines(test$MOV,col="blue") +
+legend(7,-18,legend=c("Predicted","Actual"),col=c("red","blue"),lty=1:2,cex=0.8) 
+
+```
+
+```{r ELASTIC NET}
+set.seed(18)
+
+#Model Creation
+model_netD <- train(MOV ~ DPly + DY.P + PA,
+                   data=train,
+                   method="glmnet",
+                   tuneGrid=expand.grid(alpha=seq(0,1,length=10),lambda=lambda_grid), #ERROR
+                   trControl=cntrl)
+
+model_netD$bestTune # Gives best tuning parameter
+
+# Visual inspection of Elastic Net Regularization Parameter and RMSE
+plot(model_netD)
+model_netD
+
+# Variable Importance
+plot(model_netD$finalModel,xvar="lambda", main="Elastic Net Regression",label=TRUE)
+varImp(model_netD)
+plot(varImp(model_netD),main=" Net Regression")
+
+## Elastic Regression model coefficient 
+coef(model_netD$finalModel,model_netD$bestTune$lambda)
+
+## predict outcome from Elastic Net Regression Model using test_data
+model_netpred_tsD <- predict(model_netD,newdata=test)
+model_netperformance_tsD <- data.frame(RMSE=RMSE(model_netpred_tsD,test$MOV),
+                                      Rsquare=R2(model_netpred_tsD,test$MOV))
+print(model_netperformance_tsD)
+
+#Comparison of RIDGE, LASSO and Elastic Net Regression Models performance for the test data
+comp_tsD <- matrix(c(model_lasoperformance_tsD,model_rdgperformance_tsD,model_netperformance_tsD ),ncol=2,byrow=TRUE)
+colnames(comp_tsD) <- c("RMSE","Rsquare")
+rownames(comp_tsD) <- c("LASSO","RIDGE","Net")
+print(comp_ts, digits=3)# round to 4 decimal places
+
+```
+
+PRESCRIPTIVE
+
+```{r PRESCRIPTIVE}
+#Offensive Rating
+set.seed(18)
+meanxvariables <- gbg %>%
+  group_by(Tm) %>%
+  summarise(
+    mean(QBR), mean(PassAtt), mean(TotYds), mean(X3DConv), mean(X4DConv)
+  )
+
+meanxvariables <- rename(meanxvariables, QBR = "mean(QBR)", PassAtt = "mean(PassAtt)",
+       TotYds = "mean(TotYds)", X3DConv = "mean(X3DConv)", X4DConv = "mean(X4DConv)")
+
+PredMOV <- predict(model_rdg, meanxvariables)
+meanxvariables <- cbind(meanxvariables, PredMOV)
+
+#Defensive Rating
+meanxvariablesD <- gbg %>%
+  group_by(Tm) %>%
+  summarise(
+    mean(DPly), mean(DY.P), mean(PA)
+  )
+
+meanxvariablesD <- rename(meanxvariablesD, DPly = "mean(DPly)", DY.P = "mean(DY.P)",
+        PA = "mean(PA)")
+
+PredMOVD <- predict(model_rdgD, meanxvariablesD)
+meanxvariablesD <- cbind(meanxvariablesD, PredMOVD)
+
+#Import final lines
+final <- read.csv("C:/Users/denise.cordonnier/Documents/Schoolwork/Final Lines.csv")
+final$Line <- c("+3.5", "-4.5", "-5.5", "-4", "+6", "+2.5", "-9.5", "-4.5", "-5",
+                "+3", "+2.5", "-3.5", "-6.5", "EVEN", "+8", "EVEN")
+
+```
